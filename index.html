@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VRAM vs Context — ollama-0.18.0 / B6000</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 2rem 1.5rem;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: #aaa;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      font-size: 0.8rem;
+      color: #666;
+      margin-bottom: 1.5rem;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .controls label {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .controls input[type=range] {
+      width: 180px;
+      accent-color: #4a7abf;
+    }
+
+    #xmax-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #ddd;
+      min-width: 48px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 1.25rem;
+    }
+
+    .legend-ctrl {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    button.ctrl-btn {
+      font-size: 11px;
+      padding: 3px 12px;
+      border: 0.5px solid #555;
+      border-radius: 4px;
+      background: #1e1e1e;
+      color: #ccc;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button.ctrl-btn:hover { background: #2a2a2a; }
+
+    button.leg-btn {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: transparent;
+      color: #ddd;
+      transition: opacity 0.15s;
+    }
+
+    button.leg-btn .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+      height: 520px;
+    }
+
+    @media (max-width: 600px) {
+      .chart-wrap { height: 380px; }
+      body { padding: 1rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>VRAM vs Context</h1>
+  <p class="subtitle">ollama-0.18.0 &middot; B6000</p>
+
+  <div class="controls">
+    <label for="xmax-slider">Max context:</label>
+    <input type="range" id="xmax-slider" min="1" max="100" step="1" value="100">
+    <span id="xmax-label"></span>
+  </div>
+
+  <div class="legend-ctrl">
+    <button class="ctrl-btn" id="btn-all">All</button>
+    <button class="ctrl-btn" id="btn-none">None</button>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap">
+    <canvas id="myChart"></canvas>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const raw = [
+  { model: "frob/iquest-coder:40b", context: 16384, vram: 30593792000 },
+  { model: "frob/iquest-coder:40b", context: 32768, vram: 37338232832 },
+  { model: "frob/iquest-coder:40b", context: 49152, vram: 44082673664 },
+  { model: "frob/iquest-coder:40b", context: 65536, vram: 50827114496 },
+  { model: "frob/iquest-coder:40b", context: 81920, vram: 57571555328 },
+  { model: "frob/iquest-coder:40b", context: 98304, vram: 64315996160 },
+  { model: "frob/iquest-coder:40b", context: 114688, vram: 71060436992 },
+  { model: "frob/iquest-coder:40b", context: 131072, vram: 77804877824 },
+  { model: "devstral:24b-small", context: 16384, vram: 17782134784 },
+  { model: "devstral:24b-small", context: 32768, vram: 21573785600 },
+  { model: "devstral:24b-small", context: 49152, vram: 25365436416 },
+  { model: "devstral:24b-small", context: 65536, vram: 29157087232 },
+  { model: "devstral:24b-small", context: 81920, vram: 32948738048 },
+  { model: "devstral:24b-small", context: 98304, vram: 36740388864 },
+  { model: "devstral:24b-small", context: 114688, vram: 40532039680 },
+  { model: "devstral:24b-small", context: 131072, vram: 44323690496 },
+  { model: "devstral-small-2:24b", context: 16384, vram: 18761581952 },
+  { model: "devstral-small-2:24b", context: 32768, vram: 21445936512 },
+  { model: "devstral-small-2:24b", context: 49152, vram: 24130291072 },
+  { model: "devstral-small-2:24b", context: 65536, vram: 26814645632 },
+  { model: "devstral-small-2:24b", context: 81920, vram: 29499000192 },
+  { model: "devstral-small-2:24b", context: 98304, vram: 32183354752 },
+  { model: "devstral-small-2:24b", context: 114688, vram: 34867709312 },
+  { model: "devstral-small-2:24b", context: 131072, vram: 37552063872 },
+  { model: "devstral-small-2:24b", context: 147456, vram: 40236418432 },
+  { model: "devstral-small-2:24b", context: 163840, vram: 42920772992 },
+  { model: "devstral-small-2:24b", context: 180224, vram: 45605127552 },
+  { model: "devstral-small-2:24b", context: 196608, vram: 48289482112 },
+  { model: "devstral-small-2:24b", context: 212992, vram: 50973836672 },
+  { model: "devstral-small-2:24b", context: 229376, vram: 53658191232 },
+  { model: "devstral-small-2:24b", context: 245760, vram: 56365062272 },
+  { model: "devstral-small-2:24b", context: 262144, vram: 59099748480 },
+  { model: "devstral-small-2:24b", context: 278528, vram: 61834434688 },
+  { model: "devstral-small-2:24b", context: 294912, vram: 64569120896 },
+  { model: "devstral-small-2:24b", context: 311296, vram: 67303807104 },
+  { model: "devstral-small-2:24b", context: 327680, vram: 70038493312 },
+  { model: "devstral-small-2:24b", context: 344064, vram: 72773179520 },
+  { model: "devstral-small-2:24b", context: 360448, vram: 75507865728 },
+  { model: "devstral-small-2:24b", context: 376832, vram: 78242551936 },
+  { model: "devstral-small-2:24b", context: 393216, vram: 80977238144 },
+  { model: "qwen3-coder:30b-a3b", context: 16384, vram: 20356380800 },
+  { model: "qwen3-coder:30b-a3b", context: 32768, vram: 22038296704 },
+  { model: "qwen3-coder:30b-a3b", context: 49152, vram: 23665686656 },
+  { model: "qwen3-coder:30b-a3b", context: 65536, vram: 25326631040 },
+  { model: "qwen3-coder:30b-a3b", context: 81920, vram: 26987575424 },
+  { model: "qwen3-coder:30b-a3b", context: 98304, vram: 28648519808 },
+  { model: "qwen3-coder:30b-a3b", context: 114688, vram: 30309464192 },
+  { model: "qwen3-coder:30b-a3b", context: 131072, vram: 31970408576 },
+  { model: "qwen3-coder:30b-a3b", context: 147456, vram: 33631352960 },
+  { model: "qwen3-coder:30b-a3b", context: 163840, vram: 35292297344 },
+  { model: "qwen3-coder:30b-a3b", context: 180224, vram: 36953241728 },
+  { model: "qwen3-coder:30b-a3b", context: 196608, vram: 38614186112 },
+  { model: "qwen3-coder:30b-a3b", context: 212992, vram: 40275130496 },
+  { model: "qwen3-coder:30b-a3b", context: 229376, vram: 41936074880 },
+  { model: "qwen3-coder:30b-a3b", context: 245760, vram: 43597019264 },
+  { model: "qwen3-coder:30b-a3b", context: 262144, vram: 45257963648 },
+  { model: "qwen3.5:9b", context: 16384, vram: 9237766784 },
+  { model: "qwen3.5:9b", context: 32768, vram: 9939657344 },
+  { model: "qwen3.5:9b", context: 49152, vram: 10675790464 },
+  { model: "qwen3.5:9b", context: 65536, vram: 11411923584 },
+  { model: "qwen3.5:9b", context: 81920, vram: 12148056704 },
+  { model: "qwen3.5:9b", context: 98304, vram: 12884189824 },
+  { model: "qwen3.5:9b", context: 114688, vram: 13620322944 },
+  { model: "qwen3.5:9b", context: 131072, vram: 14356456064 },
+  { model: "qwen3.5:9b", context: 147456, vram: 15092589184 },
+  { model: "qwen3.5:9b", context: 163840, vram: 15828722304 },
+  { model: "qwen3.5:9b", context: 180224, vram: 16564855424 },
+  { model: "qwen3.5:9b", context: 196608, vram: 17300988544 },
+  { model: "qwen3.5:9b", context: 212992, vram: 18037121664 },
+  { model: "qwen3.5:9b", context: 229376, vram: 18773254784 },
+  { model: "qwen3.5:9b", context: 245760, vram: 19509387904 },
+  { model: "qwen3.5:9b", context: 262144, vram: 20245521024 },
+  { model: "deepcoder:14b", context: 16384, vram: 13162129408 },
+  { model: "deepcoder:14b", context: 32768, vram: 17759086592 },
+  { model: "deepcoder:14b", context: 49152, vram: 22356043776 },
+  { model: "deepcoder:14b", context: 65536, vram: 26953000960 },
+  { model: "deepcoder:14b", context: 81920, vram: 31549958144 },
+  { model: "deepcoder:14b", context: 98304, vram: 36146915328 },
+  { model: "deepcoder:14b", context: 114688, vram: 40743872512 },
+  { model: "deepcoder:14b", context: 131072, vram: 45340829696 },
+  { model: "cogito:8b", context: 16384, vram: 7905732608 },
+  { model: "cogito:8b", context: 32768, vram: 11160512512 },
+  { model: "cogito:8b", context: 49152, vram: 14415292416 },
+  { model: "cogito:8b", context: 65536, vram: 17670072320 },
+  { model: "cogito:8b", context: 81920, vram: 20924852224 },
+  { model: "cogito:8b", context: 98304, vram: 24179632128 },
+  { model: "cogito:8b", context: 114688, vram: 27434412032 },
+  { model: "cogito:8b", context: 131072, vram: 30689191936 },
+  { model: "devstral-2:123b", context: 16384, vram: 81199552640 },
+  { model: "devstral-2:123b", context: 32768, vram: 87147075712 },
+  { model: "devstral-2:123b", context: 49152, vram: 93102987392 },
+  { model: "devstral-2:123b", context: 65536, vram: 99000178816 },
+  { model: "devstral-2:123b", context: 81920, vram: 105310515328 },
+  { model: "devstral-2:123b", context: 98304, vram: 111283204224 },
+  { model: "devstral-2:123b", context: 114688, vram: 117255893120 },
+  { model: "devstral-2:123b", context: 131072, vram: 123228582016 },
+  { model: "devstral-2:123b", context: 147456, vram: 129201270912 },
+  { model: "devstral-2:123b", context: 163840, vram: 135173959808 },
+  { model: "devstral-2:123b", context: 180224, vram: 141146648704 },
+  { model: "devstral-2:123b", context: 196608, vram: 147119337600 },
+  { model: "devstral-2:123b", context: 212992, vram: 153092026496 },
+  { model: "devstral-2:123b", context: 229376, vram: 159064715392 },
+  { model: "devstral-2:123b", context: 245760, vram: 165037404288 },
+  { model: "devstral-2:123b", context: 262144, vram: 171010093184 },
+  { model: "glm-4.7-flash:30b", context: 16384, vram: 20989454208 },
+  { model: "glm-4.7-flash:30b", context: 32768, vram: 22698633088 },
+  { model: "glm-4.7-flash:30b", context: 49152, vram: 24458143616 },
+  { model: "glm-4.7-flash:30b", context: 65536, vram: 26184099712 },
+  { model: "glm-4.7-flash:30b", context: 81920, vram: 27910055808 },
+  { model: "glm-4.7-flash:30b", context: 98304, vram: 29636011904 },
+  { model: "glm-4.7-flash:30b", context: 114688, vram: 31361968000 },
+  { model: "glm-4.7-flash:30b", context: 131072, vram: 33087924096 },
+  { model: "glm-4.7-flash:30b", context: 147456, vram: 34813880192 },
+  { model: "glm-4.7-flash:30b", context: 163840, vram: 36539836288 },
+  { model: "glm-4.7-flash:30b", context: 180224, vram: 38265792384 },
+  { model: "glm-4.7-flash:30b", context: 196608, vram: 39991748480 },
+  { model: "exaone-deep:7.8b", context: 16384, vram: 8109659477 },
+  { model: "exaone-deep:7.8b", context: 32768, vram: 11688798890 },
+  { model: "rnj-1:8b", context: 16384, vram: 7988582528 },
+  { model: "rnj-1:8b", context: 32768, vram: 10178009216 },
+  { model: "qwen2.5-coder:7b", context: 16384, vram: 6297843712 },
+  { model: "qwen2.5-coder:7b", context: 32768, vram: 8210446336 },
+  { model: "gpt-oss:20b", context: 16384, vram: 14488221056 },
+  { model: "gpt-oss:20b", context: 32768, vram: 14920365440 },
+  { model: "gpt-oss:20b", context: 49152, vram: 15356573056 },
+  { model: "gpt-oss:20b", context: 65536, vram: 15799989632 },
+  { model: "gpt-oss:20b", context: 81920, vram: 16252974464 },
+  { model: "gpt-oss:20b", context: 98304, vram: 16705959296 },
+  { model: "gpt-oss:20b", context: 114688, vram: 17158944128 },
+  { model: "gpt-oss:20b", context: 131072, vram: 17611928960 },
+  { model: "ministral-3:8b", context: 16384, vram: 9201685888 },
+  { model: "ministral-3:8b", context: 32768, vram: 11483387264 },
+  { model: "ministral-3:8b", context: 49152, vram: 13765088640 },
+  { model: "ministral-3:8b", context: 65536, vram: 16046790016 },
+  { model: "ministral-3:8b", context: 81920, vram: 18328491392 },
+  { model: "ministral-3:8b", context: 98304, vram: 20610192768 },
+  { model: "ministral-3:8b", context: 114688, vram: 22891894144 },
+  { model: "ministral-3:8b", context: 131072, vram: 25173595520 },
+  { model: "ministral-3:8b", context: 147456, vram: 27455296896 },
+  { model: "ministral-3:8b", context: 163840, vram: 29736998272 },
+  { model: "ministral-3:8b", context: 180224, vram: 32018699648 },
+  { model: "ministral-3:8b", context: 196608, vram: 34300401024 },
+  { model: "ministral-3:8b", context: 212992, vram: 36582102400 },
+  { model: "ministral-3:8b", context: 229376, vram: 38863803776 },
+  { model: "ministral-3:8b", context: 245760, vram: 41170188416 },
+  { model: "ministral-3:8b", context: 262144, vram: 43502221440 },
+  { model: "granite4:3b", context: 16384, vram: 4556591786 },
+  { model: "granite4:3b", context: 32768, vram: 7017250133 },
+  { model: "granite4:3b", context: 49152, vram: 9477908480 },
+  { model: "granite4:3b", context: 65536, vram: 11938566826 },
+  { model: "granite4:3b", context: 81920, vram: 14399225173 },
+  { model: "granite4:3b", context: 98304, vram: 16859883520 },
+  { model: "granite4:3b", context: 114688, vram: 19320541866 },
+  { model: "granite4:3b", context: 131072, vram: 21781200213 },
+  { model: "nemotron-3-nano:4b", context: 16384, vram: 5468162176 },
+  { model: "nemotron-3-nano:4b", context: 32768, vram: 5770152064 },
+  { model: "nemotron-3-nano:4b", context: 49152, vram: 6072141952 },
+  { model: "nemotron-3-nano:4b", context: 65536, vram: 6374131840 },
+  { model: "nemotron-3-nano:4b", context: 81920, vram: 6681233536 },
+  { model: "nemotron-3-nano:4b", context: 98304, vram: 7000000640 },
+  { model: "nemotron-3-nano:4b", context: 114688, vram: 7318767744 },
+  { model: "nemotron-3-nano:4b", context: 131072, vram: 7637534848 },
+  { model: "nemotron-3-nano:4b", context: 147456, vram: 7956301952 },
+  { model: "nemotron-3-nano:4b", context: 163840, vram: 8275069056 },
+  { model: "nemotron-3-nano:4b", context: 180224, vram: 8593836160 },
+  { model: "nemotron-3-nano:4b", context: 196608, vram: 8912603264 },
+  { model: "nemotron-3-nano:4b", context: 212992, vram: 9231370368 },
+  { model: "nemotron-3-nano:4b", context: 229376, vram: 9550137472 },
+  { model: "nemotron-3-nano:4b", context: 245760, vram: 9868904576 },
+  { model: "nemotron-3-nano:4b", context: 262144, vram: 10187671680 },
+  { model: "nemotron-3-nano:30b-a3b", context: 16384, vram: 25849973760 },
+  { model: "nemotron-3-nano:30b-a3b", context: 32768, vram: 25984191488 },
+  { model: "nemotron-3-nano:30b-a3b", context: 49152, vram: 26118409216 },
+  { model: "nemotron-3-nano:30b-a3b", context: 65536, vram: 26252626944 },
+  { model: "nemotron-3-nano:30b-a3b", context: 81920, vram: 26394971136 },
+  { model: "nemotron-3-nano:30b-a3b", context: 98304, vram: 26545966080 },
+  { model: "nemotron-3-nano:30b-a3b", context: 114688, vram: 26696961024 },
+  { model: "nemotron-3-nano:30b-a3b", context: 131072, vram: 26847955968 },
+  { model: "nemotron-3-nano:30b-a3b", context: 147456, vram: 26998950912 },
+  { model: "nemotron-3-nano:30b-a3b", context: 163840, vram: 27149945856 },
+  { model: "nemotron-3-nano:30b-a3b", context: 180224, vram: 27300940800 },
+  { model: "nemotron-3-nano:30b-a3b", context: 196608, vram: 27451935744 },
+  { model: "nemotron-3-nano:30b-a3b", context: 212992, vram: 27602930688 },
+  { model: "nemotron-3-nano:30b-a3b", context: 229376, vram: 27753925632 },
+  { model: "nemotron-3-nano:30b-a3b", context: 245760, vram: 27904920576 },
+  { model: "nemotron-3-nano:30b-a3b", context: 262144, vram: 28055915520 },
+  { model: "nemotron-3-nano:30b-a3b", context: 278528, vram: 28206910464 },
+  { model: "nemotron-3-nano:30b-a3b", context: 294912, vram: 28357905408 },
+  { model: "nemotron-3-nano:30b-a3b", context: 311296, vram: 28508900352 },
+  { model: "nemotron-3-nano:30b-a3b", context: 327680, vram: 28659895296 },
+  { model: "nemotron-3-nano:30b-a3b", context: 344064, vram: 28810890240 },
+  { model: "nemotron-3-nano:30b-a3b", context: 360448, vram: 28961885184 },
+  { model: "nemotron-3-nano:30b-a3b", context: 376832, vram: 29112880128 },
+  { model: "nemotron-3-nano:30b-a3b", context: 393216, vram: 29263875072 },
+  { model: "nemotron-3-nano:30b-a3b", context: 409600, vram: 29414870016 },
+  { model: "nemotron-3-nano:30b-a3b", context: 425984, vram: 29565864960 },
+  { model: "nemotron-3-nano:30b-a3b", context: 442368, vram: 29716859904 },
+  { model: "nemotron-3-nano:30b-a3b", context: 458752, vram: 29867854848 },
+  { model: "nemotron-3-nano:30b-a3b", context: 475136, vram: 30018849792 },
+  { model: "nemotron-3-nano:30b-a3b", context: 491520, vram: 30169844736 },
+  { model: "nemotron-3-nano:30b-a3b", context: 507904, vram: 30320839680 },
+  { model: "nemotron-3-nano:30b-a3b", context: 524288, vram: 30471834624 },
+  { model: "nemotron-3-nano:30b-a3b", context: 540672, vram: 30622829568 },
+  { model: "nemotron-3-nano:30b-a3b", context: 557056, vram: 30773824512 },
+  { model: "nemotron-3-nano:30b-a3b", context: 573440, vram: 30924819456 },
+  { model: "nemotron-3-nano:30b-a3b", context: 589824, vram: 31075814400 },
+  { model: "nemotron-3-nano:30b-a3b", context: 606208, vram: 31226809344 },
+  { model: "nemotron-3-nano:30b-a3b", context: 622592, vram: 31377804288 },
+  { model: "nemotron-3-nano:30b-a3b", context: 638976, vram: 31528799232 },
+  { model: "nemotron-3-nano:30b-a3b", context: 655360, vram: 31679794176 },
+  { model: "nemotron-3-nano:30b-a3b", context: 671744, vram: 31830789120 },
+  { model: "nemotron-3-nano:30b-a3b", context: 688128, vram: 31981784064 },
+  { model: "nemotron-3-nano:30b-a3b", context: 704512, vram: 32132779008 },
+  { model: "nemotron-3-nano:30b-a3b", context: 720896, vram: 32283773952 },
+  { model: "nemotron-3-nano:30b-a3b", context: 737280, vram: 32434768896 },
+  { model: "nemotron-3-nano:30b-a3b", context: 753664, vram: 32585763840 },
+  { model: "nemotron-3-nano:30b-a3b", context: 770048, vram: 32736758784 },
+  { model: "nemotron-3-nano:30b-a3b", context: 786432, vram: 32887753728 },
+  { model: "nemotron-3-nano:30b-a3b", context: 802816, vram: 33038748672 },
+  { model: "nemotron-3-nano:30b-a3b", context: 819200, vram: 33189743616 },
+  { model: "nemotron-3-nano:30b-a3b", context: 835584, vram: 33340738560 },
+  { model: "nemotron-3-nano:30b-a3b", context: 851968, vram: 33491733504 },
+  { model: "nemotron-3-nano:30b-a3b", context: 868352, vram: 33642728448 },
+  { model: "nemotron-3-nano:30b-a3b", context: 884736, vram: 33793723392 },
+  { model: "nemotron-3-nano:30b-a3b", context: 901120, vram: 33944718336 },
+  { model: "nemotron-3-nano:30b-a3b", context: 917504, vram: 34095713280 },
+  { model: "nemotron-3-nano:30b-a3b", context: 933888, vram: 34246708224 },
+  { model: "nemotron-3-nano:30b-a3b", context: 950272, vram: 34397703168 },
+  { model: "nemotron-3-nano:30b-a3b", context: 966656, vram: 34548698112 },
+  { model: "nemotron-3-nano:30b-a3b", context: 983040, vram: 34699693056 },
+  { model: "nemotron-3-nano:30b-a3b", context: 999424, vram: 34850688000 },
+  { model: "nemotron-3-nano:30b-a3b", context: 1015808, vram: 35001682944 },
+  { model: "nemotron-3-nano:30b-a3b", context: 1032192, vram: 35152677888 },
+];
+
+const palette = [
+  "#3266ad","#c85250","#4e9a51","#9b6db5","#d17a2f",
+  "#5baab0","#b55e8c","#7b7b2a","#4a7abf","#e06060",
+  "#45a087","#d4aa44","#888888","#c07840","#6644aa",
+  "#2e8b8b","#a04060","#3a9ad4"
+];
+
+const models = [...new Set(raw.map(r => r.model))];
+
+const datasets = models.map((m, i) => {
+  const pts = raw.filter(r => r.model === m).sort((a, b) => a.context - b.context);
+  return {
+    label: m,
+    data: pts.map(p => ({ x: p.context / 1024, y: +(p.vram / 1e9).toFixed(2) })),
+    borderColor: palette[i % palette.length],
+    backgroundColor: palette[i % palette.length],
+    borderWidth: 2,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    tension: 0.3,
+    fill: false,
+  };
+});
+
+const allContextsK = [...new Set(raw.map(r => r.context / 1024))].sort((a, b) => a - b);
+const maxSteps = allContextsK.length;
+
+const slider = document.getElementById('xmax-slider');
+const xmaxLabel = document.getElementById('xmax-label');
+slider.min = 1;
+slider.max = maxSteps;
+slider.value = maxSteps;
+
+function formatK(k) {
+  return k >= 1024 ? (k / 1024).toFixed(1).replace(/\.0$/, '') + 'M' : Math.round(k) + 'K';
+}
+
+function getXMax() {
+  return allContextsK[parseInt(slider.value) - 1];
+}
+
+xmaxLabel.textContent = formatK(getXMax());
+
+const chart = new Chart(document.getElementById('myChart'), {
+  type: 'line',
+  data: { datasets },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'nearest', intersect: false, axis: 'xy' },
+    plugins: {
+      legend: { display: false },
+      title: { display: false },
+      tooltip: {
+        mode: 'nearest',
+        intersect: false,
+        backgroundColor: '#1e1e1e',
+        borderColor: '#444',
+        borderWidth: 1,
+        titleColor: '#aaa',
+        bodyColor: '#ddd',
+        callbacks: {
+          title: items => 'Context: ' + formatK(items[0].parsed.x) + ' tokens',
+          label: item => ' ' + item.dataset.label + ': ' + item.parsed.y.toFixed(1) + ' GB'
+        }
+      }
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        min: 0,
+        max: getXMax(),
+        title: { display: true, text: 'Context (K tokens)', color: '#666', font: { size: 12 } },
+        ticks: { color: '#666', callback: v => formatK(v) },
+        grid: { color: 'rgba(255,255,255,0.06)' },
+        border: { color: '#333' }
+      },
+      y: {
+        title: { display: true, text: 'VRAM (GB)', color: '#666', font: { size: 12 } },
+        ticks: { color: '#666', callback: v => v + ' GB' },
+        grid: { color: 'rgba(255,255,255,0.06)' },
+        border: { color: '#333' }
+      }
+    }
+  }
+});
+
+slider.addEventListener('input', () => {
+  const xmax = getXMax();
+  xmaxLabel.textContent = formatK(xmax);
+  chart.options.scales.x.max = xmax;
+  chart.update();
+});
+
+const legendEl = document.getElementById('legend');
+
+document.getElementById('btn-all').addEventListener('click', () => {
+  chart.data.datasets.forEach(ds => ds.hidden = false);
+  chart.update();
+  document.querySelectorAll('.leg-btn').forEach(b => b.style.opacity = '1');
+});
+
+document.getElementById('btn-none').addEventListener('click', () => {
+  chart.data.datasets.forEach(ds => ds.hidden = true);
+  chart.update();
+  document.querySelectorAll('.leg-btn').forEach(b => b.style.opacity = '0.3');
+});
+
+datasets.forEach((ds, i) => {
+  const btn = document.createElement('button');
+  btn.className = 'leg-btn';
+  btn.style.border = '0.5px solid ' + ds.borderColor;
+  btn.innerHTML = '<span class="swatch" style="background:' + ds.borderColor + '"></span>' + ds.label;
+  btn.addEventListener('click', () => {
+    ds.hidden = !ds.hidden;
+    btn.style.opacity = ds.hidden ? '0.3' : '1';
+    chart.update();
+  });
+  legendEl.appendChild(btn);
+});
+</script>
+</body>
+</html>
