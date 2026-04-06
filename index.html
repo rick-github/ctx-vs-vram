@@ -72,6 +72,18 @@
       flex-wrap: wrap;
     }
 
+    .legend-section {
+      margin-bottom: 0.75rem;
+    }
+
+    .legend-section-title {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     button.ctrl-btn {
       font-size: 11px;
       padding: 3px 12px;
@@ -84,6 +96,12 @@
     }
 
     button.ctrl-btn:hover { background: #2a2a2a; }
+
+    button.ctrl-btn.active {
+      background: #4a7abf;
+      border-color: #4a7abf;
+      color: #fff;
+    }
 
     button.leg-btn {
       font-size: 11px;
@@ -103,6 +121,15 @@
       height: 10px;
       border-radius: 2px;
       flex-shrink: 0;
+    }
+
+    button.leg-btn .version-tag {
+      font-size: 9px;
+      color: #888;
+      background: #2a2a2a;
+      padding: 1px 4px;
+      border-radius: 2px;
+      margin-left: 2px;
     }
 
     .chart-wrap {
@@ -129,9 +156,19 @@
     <span id="xmax-label"></span>
   </div>
 
-  <div class="legend-ctrl">
-    <button class="ctrl-btn" id="btn-all">All</button>
-    <button class="ctrl-btn" id="btn-none">None</button>
+  <div class="legend-section">
+    <div class="legend-section-title">Version</div>
+    <div class="legend-ctrl" id="version-ctrl">
+      <button class="ctrl-btn active" data-version="all">All</button>
+    </div>
+  </div>
+
+  <div class="legend-section">
+    <div class="legend-section-title">Models</div>
+    <div class="legend-ctrl">
+      <button class="ctrl-btn" id="btn-all">All</button>
+      <button class="ctrl-btn" id="btn-none">None</button>
+    </div>
   </div>
 
   <div class="legend" id="legend"></div>
@@ -435,8 +472,8 @@ const raw = [
   { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 950272, ram: 34397703168, vram: 34397703168, nvram: 34869346304 },
   { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 966656, ram: 34548698112, vram: 34548698112, nvram: 35020341248 },
   { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 983040, ram: 34699693056, vram: 34699693056, nvram: 35171336192 },
-  { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 999424, ram: 34850688000, vram: 34850688000, nvram: 35322331136 },
-  { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 1015808, ram: 35001682944, vram: 35001682944, nvram: 35473326080 },
+  { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 999424, ram: 34850688000, vram: 34850688000, nvram: 35473326080 },
+  { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 1015808, ram: 35001682944, vram: 35001682944, nvram: 35624321024 },
   { model: "nemotron-3-nano:30b-a3b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 1032192, ram: 35152677888, vram: 35152677888, nvram: 35624321024 },
   { model: "nemotron-3-super:120b-a12b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 16384, ram: 91701882624, vram: 91701882624, nvram: 92121595904 },
   { model: "nemotron-3-super:120b-a12b-q4_K_M", version: "0.18.0", quant: "Q4_K_M", context: 32768, ram: 91886432000, vram: 91886432000, nvram: 92301950976 },
@@ -551,12 +588,22 @@ const palette = [
   "#2e8b8b","#a04060","#3a9ad4"
 ];
 
+// Get unique versions
+const versions = [...new Set(raw.map(r => r.version))].sort();
+
+// Get unique models
 const models = [...new Set(raw.map(r => r.model))];
 
+// Current filter state
+let selectedVersion = 'all';
+
+// Create datasets with version info
 const datasets = models.map((m, i) => {
   const pts = raw.filter(r => r.model === m).sort((a, b) => a.context - b.context);
+  const modelVersion = pts[0]?.version || 'unknown';
   return {
     label: m,
+    version: modelVersion,
     data: pts.map(p => ({ x: p.context / 1024, y: +(p.ram / 1e9).toFixed(2) })),
     borderColor: palette[i % palette.length],
     backgroundColor: palette[i % palette.length],
@@ -586,6 +633,45 @@ function getXMax() {
 }
 
 xmaxLabel.textContent = formatK(getXMax());
+
+// Create version selector buttons
+const versionCtrlEl = document.getElementById('version-ctrl');
+versions.forEach(ver => {
+  const btn = document.createElement('button');
+  btn.className = 'ctrl-btn';
+  btn.textContent = ver;
+  btn.dataset.version = ver;
+  btn.addEventListener('click', () => selectVersion(ver));
+  versionCtrlEl.appendChild(btn);
+});
+
+// Add event listener for the "All" button
+document.querySelector('#version-ctrl .ctrl-btn[data-version="all"]').addEventListener('click', () => selectVersion('all'));
+
+function selectVersion(version) {
+  selectedVersion = version;
+
+  // Update button states
+  document.querySelectorAll('#version-ctrl .ctrl-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.version === version);
+  });
+
+  // Filter datasets
+  datasets.forEach((ds, i) => {
+    const shouldShow = version === 'all' || ds.version === version;
+    ds.hidden = !shouldShow;
+  });
+
+  // Update legend visibility
+  const legendButtons = document.querySelectorAll('.leg-btn');
+  legendButtons.forEach((btn, i) => {
+    const ds = datasets[i];
+    btn.style.display = (selectedVersion === 'all' || ds.version === selectedVersion) ? 'inline-flex' : 'none';
+    btn.style.opacity = ds.hidden ? '0.3' : '1';
+  });
+
+  chart.update();
+}
 
 const chart = new Chart(document.getElementById('myChart'), {
   type: 'line',
@@ -641,13 +727,20 @@ slider.addEventListener('input', () => {
 const legendEl = document.getElementById('legend');
 
 document.getElementById('btn-all').addEventListener('click', () => {
-  chart.data.datasets.forEach(ds => ds.hidden = false);
+  datasets.forEach((ds, i) => {
+    const shouldShow = selectedVersion === 'all' || ds.version === selectedVersion;
+    ds.hidden = !shouldShow;
+  });
   chart.update();
-  document.querySelectorAll('.leg-btn').forEach(b => b.style.opacity = '1');
+  document.querySelectorAll('.leg-btn').forEach((b, i) => {
+    const ds = datasets[i];
+    const shouldShow = selectedVersion === 'all' || ds.version === selectedVersion;
+    b.style.opacity = shouldShow ? '1' : '0.3';
+  });
 });
 
 document.getElementById('btn-none').addEventListener('click', () => {
-  chart.data.datasets.forEach(ds => ds.hidden = true);
+  datasets.forEach(ds => ds.hidden = true);
   chart.update();
   document.querySelectorAll('.leg-btn').forEach(b => b.style.opacity = '0.3');
 });
@@ -656,7 +749,7 @@ datasets.forEach((ds, i) => {
   const btn = document.createElement('button');
   btn.className = 'leg-btn';
   btn.style.border = '0.5px solid ' + ds.borderColor;
-  btn.innerHTML = '<span class="swatch" style="background:' + ds.borderColor + '"></span>' + ds.label;
+  btn.innerHTML = '<span class="swatch" style="background:' + ds.borderColor + '"></span>' + ds.label + '<span class="version-tag">' + ds.version + '</span>';
   btn.addEventListener('click', () => {
     ds.hidden = !ds.hidden;
     btn.style.opacity = ds.hidden ? '0.3' : '1';
